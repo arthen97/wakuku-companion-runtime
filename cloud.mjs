@@ -49,7 +49,8 @@ async function streamLocalTurn(ws,b,signal,onPhase){
   if(d.kind==='done'){
    if(!text||!frames||d.text!==text)throw Error('invalid_local_done');
    const timings=Object.fromEntries(['dialogue_seconds','first_audio_seconds','total_seconds'].filter(k=>Number.isFinite(d.timings?.[k])&&d.timings[k]>=0&&d.timings[k]<=120).map(k=>[k,d.timings[k]]));
-   send(ws,{kind:'done',text,source:'local_codex_and_local_qwen_child_stream',voice_provider:'Local Qwen3-TTS VoiceDesign child A',timings});done=true;return;
+   if(!['local_codex_and_local_qwen_child_stream','local_qwen3_and_child_A_stream'].includes(d.source))throw Error('invalid_local_source');
+   send(ws,{kind:'done',text,source:d.source,voice_provider:'Local Qwen3-TTS VoiceDesign child A',timings});done=true;return;
   }
   if(d.kind==='error')throw Error('local_stream_failure');
   throw Error('invalid_local_kind');
@@ -143,7 +144,7 @@ wss.on('connection',(ws,req)=>{
    const event=req.url==='/broker/local/interaction/turn';let text,eventKey;
    if(event){const variants=contract.events[b.event];if(!variants||!Number.isInteger(b.variant??0)||(b.variant??0)<0)throw Error('invalid_event');const variant=(b.variant??0)%variants.length;text=variants[variant];eventKey=b.event+':'+variant;
    }else{
-    admit(req);send(ws,{kind:'ready',model:localMode?'local_codex_agent':MODEL});let messages=validateTurn(b);
+    admit(req);send(ws,{kind:'ready',model:localMode?'local_qwen3_1_7b':MODEL});let messages=validateTurn(b);
     if(localMode){phase='dialogue';await streamLocalTurn(ws,b,ac.signal,value=>{phase=value;});return;}
     for(let round=0;round<3;round++){
      phase='dialogue';const d=await completion(messages,round<2,ac.signal);const output=d.output||[];const calls=output.filter(o=>o.type==='function_call');
@@ -167,7 +168,7 @@ wss.on('connection',(ws,req)=>{
 function wav(pcm){const h=Buffer.alloc(44);h.write('RIFF');h.writeUInt32LE(36+pcm.length,4);h.write('WAVEfmt ',8);h.writeUInt32LE(16,16);h.writeUInt16LE(1,20);h.writeUInt16LE(1,22);h.writeUInt32LE(16000,24);h.writeUInt32LE(32000,28);h.writeUInt16LE(2,32);h.writeUInt16LE(16,34);h.write('data',36);h.writeUInt32LE(pcm.length,40);return Buffer.concat([h,pcm]);}
 function studioAuthorized(req){const expected=process.env.WAKUKU_STUDIO_TOKEN_SHA256||'';const token=req.headers['x-wakuku-studio-token'];if(expected.length!==64||typeof token!=='string')return false;const got=createHash('sha256').update(token).digest('hex');return timingSafeEqual(Buffer.from(got),Buffer.from(expected));}
 export const cloud={
- health:()=>({available:configured()&&voicesReady,last_failure:lastFailure,voice_assets_ready:voicesReady,model:localMode?'local_codex_agent':MODEL,tts:localMode?'local_qwen3_child_A':TTS,voice:localMode?'A-soft-sprite':VOICE,local:localMode,streaming:localMode,turn_transport:'http_sse',active:active.size,max_players:5,history_messages:6,max_output_tokens:240,reasoning:'none',expensive_fallback:false,interaction_llm_calls:0,rate_limit_kind:'soft_process_40_ip_200_total_daily_resets_on_process_restart',human_microphone_action_verified:false}),
+ health:()=>({available:configured()&&voicesReady,last_failure:lastFailure,voice_assets_ready:voicesReady,model:localMode?'local_qwen3_1_7b':MODEL,tts:localMode?'local_qwen3_child_A':TTS,voice:localMode?'A-soft-sprite':VOICE,local:localMode,streaming:localMode,turn_transport:'http_sse',active:active.size,max_players:5,history_messages:6,max_output_tokens:240,reasoning:'none',expensive_fallback:false,interaction_llm_calls:0,rate_limit_kind:'soft_process_40_ip_200_total_daily_resets_on_process_restart',human_microphone_action_verified:false}),
  upgrade(req,socket,head){if(!originOK(req)||!['/broker/local/chat/turn','/broker/local/interaction/turn'].includes(req.url)){socket.destroy();return;}if(wss.clients.size+httpPeers.size>=5){socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');return;}wss.handleUpgrade(req,socket,head,ws=>wss.emit('connection',ws,req));},
  async handle(req,res,url){
   const p=url.pathname;

@@ -63,6 +63,22 @@ export class TypedAgent {
   constructor({url,onPacket,onComplete}) {
     Object.assign(this,{url,onPacket,onComplete});
     this.sources=new Set(); this.epoch=0; this.muted=false; this.active=false;
+    // Wake the same-origin app while the room loads; this never gates send.
+    this.warmup();
+    if(typeof document!=='undefined'){
+      this.onVisibility=()=>{if(document.visibilityState==='visible')this.warmup();};
+      document.addEventListener('visibilitychange',this.onVisibility);
+      globalThis.addEventListener?.('pagehide',()=>{document.removeEventListener('visibilitychange',this.onVisibility);this.warmupAbort?.abort();},{once:true});
+    }
+  }
+  warmup() {
+    if(this.warmupPending||performance.now()-(this.lastWarmupAt??-Infinity)<20000)return;
+    this.lastWarmupAt=performance.now();this.warmupAbort=new AbortController();
+    this.warmupPending=fetch(this.url+'/local/chat/health',{cache:'no-store',signal:AbortSignal.any([this.warmupAbort.signal,AbortSignal.timeout(8000)])})
+      .then(response=>{if(!response.ok)throw Error('warmup_unavailable');return response.json();})
+      .then(health=>{this.backgroundAvailable=health.available===true;})
+      .catch(()=>{this.backgroundAvailable=false;})
+      .finally(()=>{this.warmupPending=null;});
   }
   unlock() {
     this.ctx ??= new AudioContext();
@@ -73,7 +89,7 @@ export class TypedAgent {
     // Called synchronously from the user's send/typing gesture.
     return this.ctx.resume();
   }
-  setMuted(value) {this.muted=!!value;if(this.gain)this.gain.gain.value=value?0:1;}
+  setMuted(value) {this.muted=!!value;if(this.gain)this.gain.gain.value=value?0:1;if(this.muted){this.speechOnsetClock=null;this.speechScanTail=null;}}
   sample() {
     const features=this.active&&!this.muted?this.analyser?.sample():null;
     if(features&&this.receivedAudio){this.mouthSamples++;this.mouthPeak=Math.max(this.mouthPeak,features.amp||0);}
@@ -95,6 +111,7 @@ export class TypedAgent {
     }
     for(const source of this.sources) {try{source.stop();stoppedSources++;}catch{}}
     this.sources.clear();this.nextTime=0;this.networkDone=null;
+    this.speechOnsetClock=null;this.speechOnsetAt=null;this.speechScanTail=null;
     if(wasActive)this.reportMouth(reason==='user_interrupt'?'interrupted':reason);
     if(wasActive&&scheduledSources)console.info('wakuku_audio_interrupted',JSON.stringify({scheduledSources,stoppedSources,audioContext:this.ctx?.state,source:reason}));
   }
@@ -106,6 +123,7 @@ export class TypedAgent {
     const epoch=this.epoch;
     this.active=true;this.finalText='';this.receivedAudio=false;
     this.turnStartedAt=performance.now();this.transcriptAt=null;this.firstAudioAt=null;
+    this.speechOnsetClock=null;this.speechOnsetAt=null;this.speechScanTail=null;
     this.inputSource=inputSource;this.mouthSamples=0;this.mouthPeak=0;this.audioSeconds=0;
     this.clockBase=null;this.clockSeen=0;this.clockAdvancedAt=0;
     this.queuedSources=0;this.endedSources=0;this.decoding=0;
@@ -115,25 +133,10 @@ export class TypedAgent {
       if(epoch!==this.epoch)return;
       this.gain.gain.value=this.muted?0:1;
       if(this.ctx.state!=='running')throw new Error('audio_blocked');
-      const endpoint='/local/chat';
-      let health=this.healthCache&&performance.now()-this.healthCache.at<30000?this.healthCache.value:null;
-      // mEnv can sleep between visits. Only the free, read-only health request
-      // may be retried; never repeat an inference/speech POST after uncertainty.
-      for(const timeout of health?[]:[2500,5000,10000]) {
-        if(epoch!==this.epoch)return;
-        try {
-          const response=await fetch(this.url+endpoint+'/health',{signal:AbortSignal.timeout(timeout)});
-          if(!response.ok)throw Error('health_unavailable');
-          health=await response.json();if(health.available)this.healthCache={at:performance.now(),value:health};break;
-        } catch(error) {if(timeout===10000)throw error;}
-      }
-      if(epoch!==this.epoch)return;
-      if(!health.available)throw new Error('not_configured');
-      this.logTiming('health_ready');
-      const turnPath=interaction?'/local/interaction/turn':endpoint+'/turn';
-      const ws=health.turn_transport==='http_sse'
-        ?new HttpSseTurn(this.url+turnPath,this.url+'/local/turn/result')
-        :new WebSocket(this.url.replace(/^http/,'ws')+turnPath);
+      // This mEnv release has one known same-origin SSE transport. Readiness
+      // is determined by this single POST; uncertain inference is never retried.
+      const turnPath=interaction?'/local/interaction/turn':'/local/chat/turn';
+      const ws=new HttpSseTurn(this.url+turnPath,this.url+'/local/turn/result');
       this.ws=ws;
       ws.onopen=()=>{
         if(epoch!==this.epoch)return ws.close();
@@ -172,6 +175,12 @@ export class TypedAgent {
       if(epoch!==this.epoch||!this.active)return;
       const clock=this.ctx.currentTime,now=performance.now();
       if(clock>this.clockSeen+.001){this.clockSeen=clock;this.clockAdvancedAt=now;}
+      if(this.speechOnsetClock!==null&&this.speechOnsetAt===null&&!this.muted&&this.gain.gain.value>0&&this.ctx.state==='running'&&clock>=this.speechOnsetClock+.015){
+        // The output clock has passed at least 15ms of qualifying signal.
+        // Subtract polling delay rather than treating packet arrival as speech.
+        this.speechOnsetAt=now-Math.max(0,clock-this.speechOnsetClock)*1000;
+        this.logTiming('speech_onset');
+      }
       // Wall time only detects a stall. It never establishes playback completion.
       if(this.networkDone&&!this.decoding&&this.sources.size===0&&clock>=this.nextTime) {
         const packet=this.networkDone;this.networkDone=null;
@@ -221,16 +230,34 @@ export class TypedAgent {
     if(this.clockBase===null){this.clockBase=this.ctx.currentTime;this.clockSeen=this.clockBase;this.clockAdvancedAt=performance.now();}
     this.sources.add(source);this.queuedSources++;
     source.onended=()=>{this.sources.delete(source);source.disconnect();if(epoch===this.epoch)this.endedSources++;};
+    this.findSpeechOnset(buffer,this.nextTime);
     source.start(this.nextTime);this.nextTime+=buffer.duration;
     this.watchPlayback(epoch);
   }
+  findSpeechOnset(buffer,startClock) {
+    if(this.muted||this.speechOnsetAt!==null||this.speechOnsetClock!==null)return;
+    const rate=buffer.sampleRate,samples=buffer.getChannelData(0),window=Math.max(1,Math.ceil(rate*.015));
+    const tail=this.speechScanTail;
+    const contiguous=tail&&tail.rate===rate&&Math.abs(tail.endClock-startClock)<=1/rate;
+    const prefix=contiguous?tail.samples:null;
+    const joined=new Float32Array((prefix?.length||0)+samples.length);
+    if(prefix)joined.set(prefix);joined.set(samples,prefix?.length||0);
+    const joinedClock=startClock-(prefix?.length||0)/rate;
+    // A 15ms RMS window tolerates natural zero crossings. Requiring its first
+    // sample above .01 excludes leading silence from the reported onset.
+    let energy=0;for(let i=0;i<Math.min(window,joined.length);i++)energy+=joined[i]*joined[i];
+    for(let i=0;i+window<=joined.length;i++){
+      if(Math.abs(joined[i])>=.01&&energy/window>=.0001){this.speechOnsetClock=joinedClock+i/rate;this.speechScanTail=null;return;}
+      energy-=joined[i]*joined[i];if(i+window<joined.length)energy+=joined[i+window]*joined[i+window];
+    }
+    this.speechScanTail={samples:joined.slice(-Math.min(window-1,joined.length)),rate,endClock:startClock+buffer.duration};
+  }
   logTiming(stage) {
     const elapsed=value=>value===null?null:Math.round(value-this.turnStartedAt);
-    console.info('wakuku_turn_timing',JSON.stringify({stage,inputSource:this.inputSource,elapsedMilliseconds:Math.round(performance.now()-this.turnStartedAt),transcriptMilliseconds:elapsed(this.transcriptAt),firstAudioMilliseconds:elapsed(this.firstAudioAt)}));
+    console.info('wakuku_turn_timing',JSON.stringify({stage,inputSource:this.inputSource,elapsedMilliseconds:Math.round(performance.now()-this.turnStartedAt),transcriptMilliseconds:elapsed(this.transcriptAt),firstAudioMilliseconds:elapsed(this.firstAudioAt),speechOnsetMilliseconds:elapsed(this.speechOnsetAt)}));
   }
   fail(code,epoch,text) {
     if(epoch!==this.epoch||!this.active)return;
-    this.healthCache=null;
     this.cancel(code);
     this.onPacket({kind:'error',text:text||(code==='not_configured'?
       'Agent 语音尚未配置；请完成本机配置并启动陪伴服务。':

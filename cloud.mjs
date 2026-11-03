@@ -15,7 +15,7 @@ try{voiceAssets=JSON.parse(await readFile(path.join(HERE,'voices/provenance.json
 catch(error){if(error.code!=='ENOENT')throw error;}
 const voicesReady=Object.entries(contract.events).every(([event,phrases])=>phrases.every((text,i)=>voiceAssets.some(a=>a.asset===`${event}-${i}`&&a.text===text)));
 const BASE='https://merouter.play.one2x.ai';
-const MODEL='deepseek-v4.1-flash',TTS='seed-tts-2.0',VOICE='zh_female_qingxinnvsheng_uranus_bigtts';
+const MODEL='deepseek-v4.1-flash',TTS='seed-tts-2.0',VOICE='zh_female_peiqi_uranus_bigtts';
 const ASR='seed-speech-speech-to-text-asr';
 const ORIGIN=process.env.PUBLIC_ORIGIN||'https://fslviul4ta14.app.stg.medeo.ai';
 const headers={'Content-Type':'application/json',...(process.env.MEROUTER_API_KEY?{'X-Api-Key':process.env.MEROUTER_API_KEY}:{}),...(process.env.MEROUTER_SERVICE_KEY?{'X-Service-Key':process.env.MEROUTER_SERVICE_KEY}:{})};

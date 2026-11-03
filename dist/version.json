@@ -14,5 +14,10 @@
     "Thumb/wrist cross the tray rim in one reach pose.",
     "Physical phone and human spoken-action acceptance remain pending."
   ],
-  "backend_revision": "responses-assistant-history-20261102"
+  "backend_revision": "responses-history-and-child-A-20261102",
+  "interaction_voice_profile": "A-soft-sprite",
+  "interaction_voice_provider": "local Qwen3-TTS VoiceDesign; original child voice; no paid API calls",
+  "dynamic_voice": "zh_female_peiqi_uranus_bigtts",
+  "dynamic_voice_label": "Holly child voice",
+  "credit_limit_unchanged": true
 }

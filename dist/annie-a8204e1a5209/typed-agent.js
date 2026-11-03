@@ -1,6 +1,64 @@
 // One typed turn generates audio and its transcript together. No canned fallback.
 import {LiveAnalyser} from './core/lipsync.js';
 
+// One POST per turn. Reading SSE never reconnects or repeats inference.
+export class HttpSseTurn {
+  constructor(url,resultUrl) {
+    Object.assign(this,{url,resultUrl,readyState:0,started:false});
+    this.abort=new AbortController();
+    queueMicrotask(()=>{if(this.readyState===0){this.readyState=1;this.onopen?.();}});
+  }
+  send(data) {
+    if(this.readyState!==1)return;
+    const packet=JSON.parse(data);
+    if(packet.kind==='cancel'){this.close();return;}
+    if(packet.kind==='tool_result') {
+      if(!this.turnId)return this.error();
+      fetch(this.resultUrl,{method:'POST',mode:'same-origin',credentials:'same-origin',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({...packet,turn_id:this.turnId}),signal:this.abort.signal})
+        .then(r=>{if(!r.ok)throw Error('tool_result_rejected');}).catch(()=>{if(!this.abort.signal.aborted)this.error();});
+      return;
+    }
+    if(this.started)return;
+    this.started=true;this.read(data).catch(()=>{if(!this.abort.signal.aborted)this.error();});
+  }
+  async read(body) {
+    const response=await fetch(this.url,{method:'POST',mode:'same-origin',credentials:'same-origin',
+      headers:{'Content-Type':'application/json','Accept':'text/event-stream'},body,signal:this.abort.signal});
+    if(!response.ok||!response.headers.get('content-type')?.startsWith('text/event-stream')||!response.body)throw Error('turn_unavailable');
+    const reader=response.body.getReader(),decoder=new TextDecoder();let pending='';
+    const dispatch=event=>{
+      const data=event.split(/\r?\n/).filter(line=>line.startsWith('data:')).map(line=>line.slice(5).replace(/^ /,'')).join('\n');
+      if(!data)return;
+      const packet=JSON.parse(data);
+      if(packet.kind==='transport') {
+        if(packet.transport!=='http_sse'||typeof packet.turn_id!=='string'||!/^[a-f0-9-]{36}$/i.test(packet.turn_id))throw Error('invalid_turn_id');
+        this.turnId=packet.turn_id;return;
+      }
+      if(!this.turnId)throw Error('missing_turn_id');
+      this.onmessage?.({data});
+    };
+    try {
+      while(this.readyState===1) {
+        const {value,done}=await reader.read();
+        pending+=decoder.decode(value,{stream:!done});
+        let match;
+        while((match=/\r?\n\r?\n/.exec(pending))) {
+          const event=pending.slice(0,match.index);pending=pending.slice(match.index+match[0].length);
+          if(this.readyState!==1)break;
+          dispatch(event);
+        }
+        if(pending.length>4500000)throw Error('event_too_large');
+        if(done)break;
+      }
+      if(pending.trim()&&this.readyState===1)dispatch(pending);
+    } finally {reader.releaseLock();}
+    if(this.readyState===1){this.readyState=3;this.onclose?.();}
+  }
+  error(){if(this.readyState!==1)return;this.onerror?.();this.close();}
+  close(){if(this.readyState===3)return;this.readyState=3;this.abort.abort();this.onclose?.();}
+}
+
 export class TypedAgent {
   constructor({url,onPacket,onComplete}) {
     Object.assign(this,{url,onPacket,onComplete});
@@ -68,7 +126,10 @@ export class TypedAgent {
       }
       if(epoch!==this.epoch)return;
       if(!health.available)throw new Error('not_configured');
-      const ws=new WebSocket(this.url.replace(/^http/,'ws')+(interaction?'/local/interaction/turn':endpoint+'/turn'));
+      const turnPath=interaction?'/local/interaction/turn':endpoint+'/turn';
+      const ws=health.turn_transport==='http_sse'
+        ?new HttpSseTurn(this.url+turnPath,this.url+'/local/turn/result')
+        :new WebSocket(this.url.replace(/^http/,'ws')+turnPath);
       this.ws=ws;
       ws.onopen=()=>{
         if(epoch!==this.epoch)return ws.close();

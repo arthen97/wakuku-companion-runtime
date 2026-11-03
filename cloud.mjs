@@ -36,7 +36,7 @@ function admit(req){
  const key=createHash('sha256').update(ip).digest('hex');const used=daily.ips.get(key)||0;
  if(used>=40||daily.total>=200)throw Error('daily_limit');daily.ips.set(key,used+1);daily.total++;
 }
-function send(ws,packet){if(ws.readyState===1)ws.send(JSON.stringify(packet));}
+function send(ws,packet){if(ws.readyState===1){if(packet.kind==='tool')ws.pendingCallId=packet.call_id;ws.send(JSON.stringify(packet));}}
 function json(res,status,data){res.writeHead(status,{'Content-Type':'application/json;charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(data));}
 async function body(req,max=3600000){let size=0;const chunks=[];for await(const chunk of req){size+=chunk.length;if(size>max)throw Error('body_too_large');chunks.push(chunk);}return JSON.parse(Buffer.concat(chunks).toString('utf8'));}
 async function receipt(response,endpoint,model,usage){
@@ -96,7 +96,7 @@ let lastFailure=null;
 const wss=new WebSocketServer({noServer:true,maxPayload:20000});
 wss.on('connection',(ws,req)=>{
  const ac=new AbortController();let started=false,ack=null,toolTimer=null;
- const stop=()=>{ac.abort();if(toolTimer)clearTimeout(toolTimer);ack?.({result:{ok:false,error:'cancelled'}});};ws.on('close',stop);ws.on('error',stop);
+ const stop=()=>{ac.abort();ws.pendingCallId=null;if(toolTimer)clearTimeout(toolTimer);ack?.({result:{ok:false,error:'cancelled'}});};ws.on('close',stop);ws.on('error',stop);
  const deadline=setTimeout(()=>{send(ws,{kind:'error',code:'timeout',text:'这次回应等得有点久，已暂停。'});stop();ws.close();},85000);
  ws.on('close',()=>clearTimeout(deadline));
  ws.on('message',async bytes=>{
@@ -114,7 +114,7 @@ wss.on('connection',(ws,req)=>{
      phase='dialogue';const d=await completion(messages,round<2,ac.signal);const output=d.output||[];const calls=output.filter(o=>o.type==='function_call');
      if(calls.length&&round<2){messages.push(...output);for(const call of calls.slice(0,1)){
       const args=validAction(call);let result={ok:false,error:'invalid_action'};
-      if(args){const received=new Promise(resolve=>{toolTimer=setTimeout(()=>{ack=null;resolve({result:{ok:false,error:'tool_timeout'}});},8000);ack=packet=>{if(packet.call_id!==call.call_id&&packet.result?.error!=='cancelled')return;clearTimeout(toolTimer);toolTimer=null;ack=null;resolve(packet);};});send(ws,{kind:'tool',call_id:call.call_id,...args});result=(await received).result;
+      if(args){const received=new Promise(resolve=>{toolTimer=setTimeout(()=>{ack=null;ws.pendingCallId=null;resolve({result:{ok:false,error:'tool_timeout'}});},8000);ack=packet=>{if(packet.call_id!==call.call_id&&packet.result?.error!=='cancelled')return;clearTimeout(toolTimer);toolTimer=null;ack=null;ws.pendingCallId=null;resolve(packet);};});send(ws,{kind:'tool',call_id:call.call_id,...args});result=(await received).result;
        console.info(JSON.stringify({event:'native_tool_receipt',call_id:call.call_id,action:args.action,value:contract.actions[args.action]===null?'[private]':args.value,ok:result?.ok===true,status:result?.status||null}));}
       messages.push({type:'function_call_output',call_id:call.call_id,output:JSON.stringify(result)});
      }continue;}
@@ -160,7 +160,8 @@ export const cloud={
    }
    if(req.method==='POST'&&p==='/broker/local/turn/result'){
     const b=await body(req,20000),peer=httpPeers.get(b.turn_id);
-    if(!peer||typeof b.call_id!=='string'||b.call_id.length>160||!b.result||typeof b.result!=='object'){json(res,404,{error:'turn_not_found'});return;}
+    if(!peer||peer.readyState!==1||typeof b.turn_id!=='string'||!/^[a-f0-9-]{36}$/i.test(b.turn_id)||typeof b.call_id!=='string'||!b.call_id||b.call_id.length>160||peer.pendingCallId!==b.call_id||!b.result||typeof b.result!=='object'||Array.isArray(b.result)){json(res,404,{error:'turn_not_found'});return;}
+    peer.pendingCallId=null;
     peer.emit('message',Buffer.from(JSON.stringify({kind:'tool_result',call_id:b.call_id,result:b.result})));
     json(res,202,{accepted:true});return;
    }

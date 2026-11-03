@@ -3,7 +3,7 @@
   "pack": "companion-770d4b65cb8b.pck",
   "pack_sha256": "770d4b65cb8bac364ca3f51fdb0a49ffc2293676ea53acbdb129ca21889f1d0e",
   "module": "annie-a8204e1a5209",
-  "index_sha256": "26078f9216e3e83ca4f67a03aaf03aeb8c9050ce1070d5d61f89feadf4c21977",
+  "index_sha256": "1be68c473532e888fc12c06be91a2c9b607422ce888f64c099e995b1c8818cee",
   "wasm_sha256": "fc74679e3b97f76878947fcd4fbe1268cbfa6188182a2e33bbc3f5dc9bfa57d0",
   "scope": "Latest frozen scene, cinematic lighting, contact-shadow correction, v026 closed animation seams, right-of-rug tea table, responsive portrait framing; same-origin Merouter dialogue and audio.",
   "visual_signoff": false,
@@ -14,10 +14,13 @@
     "Thumb/wrist cross the tray rim in one reach pose.",
     "Physical phone and human spoken-action acceptance remain pending."
   ],
-  "backend_revision": "child-A-sanitized-service-diagnostics-20261102",
+  "backend_revision": "local-codex-qwen-child-A-http-stream-20261103",
   "interaction_voice_profile": "A-soft-sprite",
   "interaction_voice_provider": "local Qwen3-TTS VoiceDesign; original child voice; no paid API calls",
-  "dynamic_voice": "zh_female_peiqi_uranus_bigtts",
-  "dynamic_voice_label": "Holly child voice",
-  "credit_limit_unchanged": true
+  "dynamic_voice": "A-soft-sprite",
+  "dynamic_voice_label": "软糯小精灵 A",
+  "credit_limit_unchanged": true,
+  "dynamic_voice_provider": "local Qwen3-TTS VoiceDesign",
+  "dialogue_provider": "user-authorized local Codex existing ChatGPT login",
+  "local_mac_required": true
 }

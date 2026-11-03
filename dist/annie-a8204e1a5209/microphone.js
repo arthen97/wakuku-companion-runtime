@@ -12,11 +12,14 @@ export class MicrophoneInput {
       const health=await fetch(this.url+'/local/asr/health',{signal:AbortSignal.timeout(2500)}).then(r=>r.json());
       if(epoch!==this.epoch)return;
       if(!health.available)throw new Error('asr_unavailable');
-      this.remoteAsr=health.local===false;this.asrProvider=health.provider||health.model||'local_asr';
-      if(this.remoteAsr&&!this.cloudConsent) {
-        this.cloudConsent=window.confirm('语音会发送给 Merouter 做中文识别，用于和 WAKUKU 对话。是否启用云端语音？');
-        if(!this.cloudConsent){this.cancel();this.onState('idle');return;}
+      this.remoteAsr=health.local===false||health.remote_from_browser===true;this.asrConsentCode=health.consent_code||'microphone_audio_to_merouter_asr';this.asrProvider=health.provider||health.model||'local_asr';
+      const consentBinding=JSON.stringify([this.asrConsentCode,this.asrProvider,health.processing_location||'provider']);
+      if(this.remoteAsr&&this.approvedConsentBinding!==consentBinding) {
+        this.cloudConsent=window.confirm(health.consent_text||'语音会发送给 Merouter 做中文识别，用于和 WAKUKU 对话。是否启用云端语音？');
+        if(!this.cloudConsent){this.approvedConsentBinding=null;this.cancel();this.onState('idle');return;}
+        this.approvedConsentBinding=consentBinding;
       }
+      this.recordingConsentBinding=consentBinding;
       const stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
       if(epoch!==this.epoch){stream.getTracks().forEach(t=>t.stop());console.info('wakuku_microphone_lifecycle',JSON.stringify({event:'late_stream_closed',tracksStopped:stream.getTracks().length}));return;}
       this.stream=stream;
@@ -60,7 +63,7 @@ export class MicrophoneInput {
     this.onState('transcribing');this.abort=new AbortController();
     try{
       console.info('wakuku_microphone_asr_request',JSON.stringify({source:'getUserMedia',provider:this.asrProvider,rate:16000,pcmBytes:bytes.length,cloudAudioUpload:!!this.remoteAsr,consent:!!this.cloudConsent}));
-      const response=await fetch(this.url+'/local/asr/transcribe',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({pcm:btoa(binary),rate:16000,source:'browser_microphone',...(this.remoteAsr?{consent:'microphone_audio_to_merouter_asr'}:{})}),signal:this.abort.signal});
+      const response=await fetch(this.url+'/local/asr/transcribe',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({pcm:btoa(binary),rate:16000,source:'browser_microphone',...(this.remoteAsr&&this.approvedConsentBinding===this.recordingConsentBinding?{consent:this.asrConsentCode}:{})}),signal:this.abort.signal});
       if(!response.ok)throw new Error('asr_failed');const result=await response.json();
       if(epoch!==this.epoch)return;
       const text=String(result.text||'').trim();this.active=false;

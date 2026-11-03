@@ -4,8 +4,8 @@ import {BrokerDecider} from './core/decide.js';
 import {TaitaiFloor} from './floor-zh.js';
 import {CLIPS} from './clips-2d.js';
 import {CONFIG} from './config.js';
-import {TypedAgent} from './typed-agent.js?revision=local-codex-child-A-20261103';
-import {MicrophoneInput} from './microphone.js';
+import {TypedAgent} from './typed-agent.js?revision=local-asr-child-A-20261103';
+import {MicrophoneInput} from './microphone.js?revision=local-asr-child-A-20261103';
 import {RoomAudio} from './room-audio.js';
 
 const bus = new Bus();

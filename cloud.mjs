@@ -109,7 +109,7 @@ wss.on('connection',(ws,req)=>{
    const event=req.url==='/broker/local/interaction/turn';let text,eventKey;
    if(event){const variants=contract.events[b.event];if(!variants||!Number.isInteger(b.variant??0)||(b.variant??0)<0)throw Error('invalid_event');const variant=(b.variant??0)%variants.length;text=variants[variant];eventKey=b.event+':'+variant;
    }else{
-    admit(req);send(ws,{kind:'ready',model:MODEL});let messages=validateTurn(b);
+    admit(req);send(ws,{kind:'ready',model:localMode?'local_codex_agent':MODEL});let messages=validateTurn(b);
     for(let round=0;round<3;round++){
      phase='dialogue';const d=await completion(messages,round<2,ac.signal);const output=d.output||[];const calls=output.filter(o=>o.type==='function_call');
      if(calls.length&&round<2){messages.push(...output);for(const call of calls.slice(0,1)){
@@ -125,7 +125,7 @@ wss.on('connection',(ws,req)=>{
    if(ac.signal.aborted)return;
    send(ws,{kind:'transcript',text});send(ws,{kind:'queued',stage:'speech'});phase=event?'cached_voice':'speech';const audio=await speech(text,ac.signal,eventKey);
    if(ac.signal.aborted)return;send(ws,{kind:'audio_encoded',...audio});send(ws,{kind:'done',text,source:event?'packaged_interaction_audio':localMode?'local_codex_and_local_qwen_child':'merouter_deepseek_and_cloud_tts',voice_provider:audio.provider});
-  }catch(error){console.info(JSON.stringify({event:'cloud_turn_failure',code:/^[a-z0-9_]+$/i.test(error.message||'')?error.message:'transport_error',automatic_retry:false}));if(!ac.signal.aborted)send(ws,{kind:'error',code:error.message==='daily_limit'?'daily_limit':'game_service',text:error.message==='daily_limit'?'今天的试玩对话次数已用完。':error.message==='busy'?'小屋有几段声音正在回应，请稍后再试。':'这次云端回应没连上，已保留当前动作。'});}
+  }catch(error){lastFailure={phase,code:/^[a-z0-9_]+$/i.test(error.message||'')?error.message:'transport_error',at:new Date().toISOString()};console.info(JSON.stringify({event:'cloud_turn_failure',code:/^[a-z0-9_]+$/i.test(error.message||'')?error.message:'transport_error',automatic_retry:false}));if(!ac.signal.aborted)send(ws,{kind:'error',code:error.message==='daily_limit'?'daily_limit':'game_service',text:error.message==='daily_limit'?'今天的试玩对话次数已用完。':error.message==='busy'?'小屋有几段声音正在回应，请稍后再试。':'这次云端回应没连上，已保留当前动作。'});}
   finally{active.delete(ws);setTimeout(()=>ws.close(),500);}
  });
 });
@@ -137,7 +137,7 @@ export const cloud={
  async handle(req,res,url){
   const p=url.pathname;
   if(req.method==='GET'&&p==='/broker/local/chat/health'){json(res,200,this.health());return;}
-  if(req.method==='GET'&&p==='/broker/local/asr/health'){json(res,200,{available:configured(),provider:'Merouter Seed ASR',model:ASR,local:false,requires_cloud_consent:true,real_voice_verified:false});return;}
+  if(req.method==='GET'&&p==='/broker/local/asr/health'){json(res,200,localMode?{available:configured(),provider:'本机离线 Qwen ASR',model:'Qwen3-ASR-0.6B-4bit',local:false,processing_location:'owner_local_mac',remote_from_browser:true,consent_text:'语音将发送到本项目的本机离线识别服务，用于与 WAKUKU 对话。不保存录音，不增加 Merouter 额度。是否启用？',consent_code:'microphone_audio_to_owner_local_asr',requires_cloud_consent:true,real_voice_verified:false}:{available:configured(),provider:'Merouter Seed ASR',model:ASR,local:false,requires_cloud_consent:true,real_voice_verified:false});return;}
   if(!originOK(req)){json(res,403,{error:'origin'});return;}
   if(!configured()){json(res,503,{error:'not_configured'});return;}
   try{
@@ -167,9 +167,10 @@ export const cloud={
    }
    if(p==='/broker/local/decide'&&req.method==='POST'){await body(req,16000);json(res,200,{available:false,source:'cloud_native_routine_only_local_laya_retained_on_mac'});return;}
    if(p==='/broker/local/asr/transcribe'&&req.method==='POST'){
-    admit(req);const b=await body(req,700000);if(b.source!=='browser_microphone'||b.consent!=='microphone_audio_to_merouter_asr'||b.rate!==16000)throw Error('microphone_consent_required');
+    admit(req);const b=await body(req,700000);if(b.source!=='browser_microphone'||b.consent!==(localMode?'microphone_audio_to_owner_local_asr':'microphone_audio_to_merouter_asr')||b.rate!==16000)throw Error('microphone_consent_required');
     const pcm=Buffer.from(String(b.pcm||''),'base64');if(pcm.length<=8000||pcm.length>416000||pcm.length%2)throw Error('invalid_audio');
     const ac=new AbortController();req.on('aborted',()=>ac.abort());res.on('close',()=>ac.abort());
+    if(localMode){const r=await localPost('/asr',{pcm:b.pcm,rate:16000,source:'browser_microphone'},ac.signal);const d=await r.json();if(typeof d.text!=='string'||!d.text.trim())throw Error('no_transcript');json(res,200,{text:d.text.slice(0,300),provider:'本机离线 Qwen ASR',local:false,processing_location:'owner_local_mac',processing_seconds:d.processing_seconds,audio_retained:false,merouter_calls:0});return;}
     const start=Date.now(),r=await post('/v1/audio/transcriptions/jobs',{model:ASR,file:'data:audio/wav;base64,'+wav(pcm).toString('base64'),language:'zh',enable_itn:true,enable_punc:true},ac.signal);let d=await r.json();await receipt(r,'/v1/audio/transcriptions/jobs',ASR);const job=d.id;if(!job)throw Error('missing_asr_job');
     for(let i=0;i<30&&!['completed','failed','cancelled'].includes(d.status);i++){await new Promise(resolve=>setTimeout(resolve,750));if(ac.signal.aborted)return;const poll=await fetch(BASE+'/v1/audio/transcriptions/jobs/'+encodeURIComponent(job),{headers,signal:AbortSignal.any([ac.signal,AbortSignal.timeout(10000)])});if(!poll.ok)throw Error('asr_poll_unavailable');d=await poll.json();}
     const text=d.text||d.output?.text||d.data?.text||'';if(!text)throw Error('no_transcript');json(res,200,{text:String(text).slice(0,300),provider:'Merouter Seed ASR',local:false,processing_seconds:(Date.now()-start)/1000,audio_retained:false});return;

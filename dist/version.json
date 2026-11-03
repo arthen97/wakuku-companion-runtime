@@ -3,7 +3,7 @@
   "pack": "companion-770d4b65cb8b.pck",
   "pack_sha256": "770d4b65cb8bac364ca3f51fdb0a49ffc2293676ea53acbdb129ca21889f1d0e",
   "module": "annie-a8204e1a5209",
-  "index_sha256": "13ad64d4af236bc20341920639a0696f86a7ddf77c73ece6fc975b45b43b90e6",
+  "index_sha256": "a5f5218b17c4d1235def0f73e229e21c7d52b44360b3f38f1731e2861286fd21",
   "wasm_sha256": "fc74679e3b97f76878947fcd4fbe1268cbfa6188182a2e33bbc3f5dc9bfa57d0",
   "scope": "Latest frozen Godot scene with user-authorized local Codex dialogue, offline original child A speech and offline Chinese ASR through an authenticated bridge.",
   "visual_signoff": false,
@@ -14,7 +14,7 @@
     "Thumb/wrist cross the tray rim in one reach pose.",
     "Physical phone and human spoken-action acceptance remain pending."
   ],
-  "backend_revision": "offline-qwen3-latest-user-priority-child-A-20261103",
+  "backend_revision": "offline-qwen3-warm-h2-child-A-onset-20261103",
   "interaction_voice_profile": "A-soft-sprite",
   "interaction_voice_provider": "local Qwen3-TTS VoiceDesign; original child voice; no paid API calls",
   "dynamic_voice": "A-soft-sprite",
@@ -31,5 +31,6 @@
   "target_speech_onset_seconds": 3,
   "laya_role": "typed intent classifier; not a free-text generator and not on speech critical path",
   "paid_runtime_api_calls": 0,
-  "context_policy": "whitelisted physical room facts before history; latest user message last; prior dialogue excluded from environmental facts"
+  "context_policy": "whitelisted physical room facts before history; latest user message last; prior dialogue excluded from environmental facts",
+  "connection_policy": "dedicated origin HTTP2 pool and visible-room read-only preconnect; no inference retries"
 }

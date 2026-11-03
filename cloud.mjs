@@ -1,6 +1,7 @@
 // Same-origin Merouter APIs. No local MLX dependency, paid realtime sessions,
 // host provider configuration, arbitrary model selection, or inference retries.
 import {WebSocketServer} from 'ws';
+import {Pool,fetch as localFetch} from 'undici';
 import {createHash,timingSafeEqual,randomUUID} from 'node:crypto';
 import {EventEmitter} from 'node:events';
 import {readFile} from 'node:fs/promises';
@@ -24,7 +25,27 @@ const LOCAL_URL=String(process.env.WAKUKU_LOCAL_AGENT_URL||'').replace(/\/$/,'')
 const LOCAL_TOKEN=process.env.WAKUKU_LOCAL_AGENT_TOKEN||'';
 const localMode=!!(LOCAL_URL&&LOCAL_TOKEN);
 const configured=()=>localMode||!!(process.env.MEROUTER_API_KEY||process.env.MEROUTER_SERVICE_KEY);
-async function localPost(route,payload,signal){const r=await fetch(LOCAL_URL+route,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+LOCAL_TOKEN},body:JSON.stringify(payload),signal:signal?AbortSignal.any([signal,AbortSignal.timeout(55000)]):AbortSignal.timeout(55000)});if(!r.ok)throw Error('local_agent_'+r.status);return r;}
+// The dedicated pool cannot redirect server credentials or affect Merouter.
+const localOrigin=localMode?new URL(LOCAL_URL):null;
+if(localOrigin&&(localOrigin.origin!==LOCAL_URL||localOrigin.username||localOrigin.password||(localOrigin.protocol!=='https:'&&!(localOrigin.protocol==='http:'&&['127.0.0.1','localhost','[::1]'].includes(localOrigin.hostname)))))throw Error('invalid_local_origin');
+// Two HTTP/1 connections keep ASR usable during speech; HTTP/2 may multiplex
+// the same TLS session. An idle conversation connection survives short pauses.
+const localPool=localMode?new Pool(LOCAL_URL,{connections:2,pipelining:1,allowH2:true,keepAliveTimeout:60000,keepAliveMaxTimeout:60000,keepAliveTimeoutThreshold:1000}):null;
+let localWarmPending=false,lastLocalWarm=-Infinity;
+async function warmLocal(){
+ if(!localPool||localWarmPending||performance.now()-lastLocalWarm<15000)return;
+ localWarmPending=true;lastLocalWarm=performance.now();
+ try{
+  const r=await localFetch(LOCAL_URL+'/health',{method:'GET',headers:{Authorization:'Bearer '+LOCAL_TOKEN},dispatcher:localPool,redirect:'error',signal:AbortSignal.timeout(4000)});
+  // Consume a bounded body so the private connection is reusable; never log it.
+  if(r.body){const reader=r.body.getReader();let bytes=0;try{while(true){const d=await reader.read();if(d.done)break;bytes+=d.value.byteLength;if(bytes>16000)throw Error('local_health_size');}}finally{await reader.cancel().catch(()=>{});reader.releaseLock();}}
+ }catch{}finally{localWarmPending=false;}
+}
+async function localPost(route,payload,signal){
+ if(!localPool||!['/turn','/chat','/speech','/asr'].includes(route))throw Error('invalid_local_route');
+ const r=await localFetch(LOCAL_URL+route,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+LOCAL_TOKEN},body:JSON.stringify(payload),dispatcher:localPool,redirect:'error',signal:signal?AbortSignal.any([signal,AbortSignal.timeout(55000)]):AbortSignal.timeout(55000)});
+ if(!r.ok){await r.body?.cancel().catch(()=>{});throw Error('local_agent_'+r.status);}return r;
+}
 // The local worker emits bounded NDJSON so the first PCM can play before the
 // complete utterance is synthesized. No tools or caller-selected routes exist.
 function compactRoomFacts(context){
@@ -38,8 +59,10 @@ function compactRoomFacts(context){
  }catch{return '';}
 }
 async function streamLocalTurn(ws,b,signal,onPhase){
+ const started=performance.now(),gatewayTimings={};const seconds=()=>Math.round((performance.now()-started)*1000)/1000000;
  const payload={text:b.text,history:(Array.isArray(b.history)?b.history:[]).slice(-4).filter(m=>['user','assistant'].includes(m?.role)&&typeof m.text==='string').map(m=>({role:m.role,text:m.text.slice(0,140)})),context:compactRoomFacts(b.context)};
  const response=await localPost('/turn',payload,signal);
+ gatewayTimings.local_headers_seconds=seconds();
  if(!response.body||!String(response.headers.get('content-type')||'').startsWith('application/x-ndjson'))throw Error('invalid_local_stream');
  const reader=response.body.getReader(),decoder=new TextDecoder();let pending='',text='',frames=0,done=false;
  const packet=line=>{
@@ -47,12 +70,13 @@ async function streamLocalTurn(ws,b,signal,onPhase){
   const d=JSON.parse(line);
   if(d.kind==='transcript'){
    if(text||frames||typeof d.text!=='string'||!d.text.trim()||d.text.length>100)throw Error('invalid_local_transcript');
-   text=d.text;onPhase('speech');send(ws,{kind:'transcript',text});return;
+   text=d.text;gatewayTimings.transcript_seconds=seconds();onPhase('speech');send(ws,{kind:'transcript',text});return;
   }
   if(d.kind==='audio'){
    if(!text||d.rate!==24000||typeof d.pcm!=='string'||d.pcm.length>160000||!d.pcm.length||!/[A-Za-z0-9+/]/.test(d.pcm)||!/^[A-Za-z0-9+/]*={0,2}$/.test(d.pcm))throw Error('invalid_local_audio');
    const pcm=Buffer.from(d.pcm,'base64');
    if(!pcm.length||pcm.length%2||pcm.length>120000||pcm.toString('base64')!==d.pcm)throw Error('invalid_local_pcm');
+   if(!frames)gatewayTimings.first_pcm_seconds=seconds();
    frames+=pcm.length/2;if(frames>480000)throw Error('local_audio_too_long');
    send(ws,{kind:'audio',pcm:d.pcm,rate:24000});return;
   }
@@ -60,7 +84,8 @@ async function streamLocalTurn(ws,b,signal,onPhase){
    if(!text||!frames||d.text!==text)throw Error('invalid_local_done');
    const timings=Object.fromEntries(['dialogue_seconds','first_audio_seconds','total_seconds'].filter(k=>Number.isFinite(d.timings?.[k])&&d.timings[k]>=0&&d.timings[k]<=120).map(k=>[k,d.timings[k]]));
    if(!['local_codex_and_local_qwen_child_stream','local_qwen3_and_child_A_stream'].includes(d.source))throw Error('invalid_local_source');
-   send(ws,{kind:'done',text,source:d.source,voice_provider:'Local Qwen3-TTS VoiceDesign child A',timings});done=true;return;
+   gatewayTimings.total_seconds=seconds();console.info(JSON.stringify({event:'local_gateway_timing',...gatewayTimings}));
+   send(ws,{kind:'done',text,source:d.source,voice_provider:'Local Qwen3-TTS VoiceDesign child A',timings,gateway_timings:gatewayTimings});done=true;return;
   }
   if(d.kind==='error')throw Error('local_stream_failure');
   throw Error('invalid_local_kind');
@@ -182,7 +207,7 @@ export const cloud={
  upgrade(req,socket,head){if(!originOK(req)||!['/broker/local/chat/turn','/broker/local/interaction/turn'].includes(req.url)){socket.destroy();return;}if(wss.clients.size+httpPeers.size>=5){socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');return;}wss.handleUpgrade(req,socket,head,ws=>wss.emit('connection',ws,req));},
  async handle(req,res,url){
   const p=url.pathname;
-  if(req.method==='GET'&&p==='/broker/local/chat/health'){json(res,200,this.health());return;}
+  if(req.method==='GET'&&p==='/broker/local/chat/health'){void warmLocal();json(res,200,this.health());return;}
   if(req.method==='GET'&&p==='/broker/local/asr/health'){json(res,200,localMode?{available:configured(),provider:'本机离线 Qwen ASR',model:'Qwen3-ASR-0.6B-4bit',local:false,processing_location:'owner_local_mac',remote_from_browser:true,consent_text:'语音将发送到本项目的本机离线识别服务，用于与 WAKUKU 对话。不保存录音，不增加 Merouter 额度。是否启用？',consent_code:'microphone_audio_to_owner_local_asr',requires_cloud_consent:true,real_voice_verified:false}:{available:configured(),provider:'Merouter Seed ASR',model:ASR,local:false,requires_cloud_consent:true,real_voice_verified:false});return;}
   if(!originOK(req)){json(res,403,{error:'origin'});return;}
   if(!configured()){json(res,503,{error:'not_configured'});return;}

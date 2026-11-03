@@ -68,7 +68,15 @@ export class TypedAgent {
     if(typeof document!=='undefined'){
       this.onVisibility=()=>{if(document.visibilityState==='visible')this.warmup();};
       document.addEventListener('visibilitychange',this.onVisibility);
-      globalThis.addEventListener?.('pagehide',()=>{document.removeEventListener('visibilitychange',this.onVisibility);this.warmupAbort?.abort();},{once:true});
+      // Establish the read-only connection while the user focuses or types,
+      // without sending input content and without gating the actual turn.
+      this.onIntent=()=>this.warmup();
+      document.addEventListener('focusin',this.onIntent,{passive:true});
+      document.addEventListener('input',this.onIntent,{passive:true});
+      // An open, visible room keeps the existing small service ready. Hidden
+      // pages do no periodic work and no warmup ever submits model input.
+      this.warmTimer=setInterval(()=>{if(document.visibilityState==='visible')this.warmup();},20000);
+      globalThis.addEventListener?.('pagehide',()=>{clearInterval(this.warmTimer);document.removeEventListener('visibilitychange',this.onVisibility);document.removeEventListener('focusin',this.onIntent);document.removeEventListener('input',this.onIntent);this.warmupAbort?.abort();},{once:true});
     }
   }
   warmup() {
@@ -155,6 +163,7 @@ export class TypedAgent {
             .catch(()=>this.fail('audio_decode',epoch,'这次声音没能播放，请稍后再试。'))
             .finally(()=>{if(epoch===this.epoch)this.decoding--;});
         } else if(packet.kind==='done') {
+          if(packet.gateway_timings){const timings=Object.fromEntries(['local_headers_seconds','transcript_seconds','first_pcm_seconds','total_seconds'].filter(k=>Number.isFinite(packet.gateway_timings[k])).map(k=>[k,packet.gateway_timings[k]]));console.info('wakuku_gateway_timing',JSON.stringify(timings));}
           this.finalText=packet.text;
           this.networkDone=packet;
           if(!this.receivedAudio&&!this.decoding)return this.fail('no_audio',epoch,'这次没有生成声音，可以重新说一句或发送文字。');

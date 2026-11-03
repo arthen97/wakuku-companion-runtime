@@ -4,7 +4,7 @@ import {BrokerDecider} from './core/decide.js';
 import {TaitaiFloor} from './floor-zh.js';
 import {CLIPS} from './clips-2d.js';
 import {CONFIG} from './config.js';
-import {TypedAgent} from './typed-agent.js?revision=local-asr-child-A-20261103';
+import {TypedAgent} from './typed-agent.js?revision=local-stream-child-A-20261103';
 import {MicrophoneInput} from './microphone.js?revision=local-asr-child-A-20261103';
 import {RoomAudio} from './room-audio.js';
 
@@ -57,6 +57,7 @@ const typed = new TypedAgent({url:CONFIG.brokerUrl,
     if(packet.kind==='transcript') {
       bus.emit('assistant.partial',{text:packet.text});
       deliver('assistant.partial',{text:packet.text});
+      deliver('state',{stage:'preparing_voice',live});
     }
     if(packet.kind==='tool')deliver('agent.tool',packet);
     if(packet.kind==='expression')character.setFace(packet.name);
@@ -232,7 +233,7 @@ window.TaitaiAnnie=Object.freeze({
   status() {return JSON.stringify({mode:live?'gptlive':'merouter_deepseek_laya',stage:lastTurn.kind,decisions:decisionCount,liveConfigured:false,voiceEntryEnabled:true,capabilities:Object.keys(CLIPS)});},
 });
 // UI is an optional bounded shell. A failed UI chunk must not disable voice/world.
-import('./ui/hud.js').then(({mountGameHUD})=>{
+import('./ui/hud.js?revision=local-stream-child-A-20261103').then(({mountGameHUD})=>{
   hud=mountGameHUD({dispatch:data=>deliver('ui.action',data),preview});
 }).catch(()=>console.warn('wakuku_hud_fallback','HUD unavailable; original game controls retained'));
 window.addEventListener('keydown',event=>{if(event.key==='Escape'&&(microphone?.active||typed.active)){interrupt();deliver('notice',{text:'这次回应已停止。'});}});

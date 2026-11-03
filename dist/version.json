@@ -3,7 +3,7 @@
   "pack": "companion-770d4b65cb8b.pck",
   "pack_sha256": "770d4b65cb8bac364ca3f51fdb0a49ffc2293676ea53acbdb129ca21889f1d0e",
   "module": "annie-a8204e1a5209",
-  "index_sha256": "cb445aa6ecd85fe79477ddb9b105ba79cc61813954c72050d38ca73a42d44fea",
+  "index_sha256": "db99fa366584c917db7a86a7d52039d9d0c3482836ec64b66f9bf88f4e70b7f8",
   "wasm_sha256": "fc74679e3b97f76878947fcd4fbe1268cbfa6188182a2e33bbc3f5dc9bfa57d0",
   "scope": "Latest frozen Godot scene with user-authorized local Codex dialogue, offline original child A speech and offline Chinese ASR through an authenticated bridge.",
   "visual_signoff": false,
@@ -14,15 +14,18 @@
     "Thumb/wrist cross the tray rim in one reach pose.",
     "Physical phone and human spoken-action acceptance remain pending."
   ],
-  "backend_revision": "local-codex-qwen-child-A-and-asr-20261103",
+  "backend_revision": "local-codex-luna-stream-child-A-20261103",
   "interaction_voice_profile": "A-soft-sprite",
   "interaction_voice_provider": "local Qwen3-TTS VoiceDesign; original child voice; no paid API calls",
   "dynamic_voice": "A-soft-sprite",
   "dynamic_voice_label": "软糯小精灵 A",
   "credit_limit_unchanged": true,
   "dynamic_voice_provider": "local Qwen3-TTS VoiceDesign",
-  "dialogue_provider": "user-authorized local Codex existing ChatGPT login",
+  "dialogue_provider": "user-authorized local Codex GPT-6-Luna, isolated tools disabled",
   "local_mac_required": true,
   "asr_provider": "offline Qwen3-ASR on owner Mac",
-  "browser_audio_consent_required": true
+  "browser_audio_consent_required": true,
+  "dynamic_voice_streaming": true,
+  "first_reply_latency_optimized": true,
+  "response_start_measurement": "actual first PCM; exact public timing recorded separately"
 }

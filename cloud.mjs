@@ -25,6 +25,40 @@ const LOCAL_TOKEN=process.env.WAKUKU_LOCAL_AGENT_TOKEN||'';
 const localMode=!!(LOCAL_URL&&LOCAL_TOKEN);
 const configured=()=>localMode||!!(process.env.MEROUTER_API_KEY||process.env.MEROUTER_SERVICE_KEY);
 async function localPost(route,payload,signal){const r=await fetch(LOCAL_URL+route,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+LOCAL_TOKEN},body:JSON.stringify(payload),signal:signal?AbortSignal.any([signal,AbortSignal.timeout(55000)]):AbortSignal.timeout(55000)});if(!r.ok)throw Error('local_agent_'+r.status);return r;}
+// The local worker emits bounded NDJSON so the first PCM can play before the
+// complete utterance is synthesized. No tools or caller-selected routes exist.
+async function streamLocalTurn(ws,b,signal,onPhase){
+ const payload={text:b.text,history:(Array.isArray(b.history)?b.history:[]).slice(-4).filter(m=>['user','assistant'].includes(m?.role)&&typeof m.text==='string').map(m=>({role:m.role,text:m.text.slice(0,140)})),context:String(b.context||'').slice(0,600)};
+ const response=await localPost('/turn',payload,signal);
+ if(!response.body||!String(response.headers.get('content-type')||'').startsWith('application/x-ndjson'))throw Error('invalid_local_stream');
+ const reader=response.body.getReader(),decoder=new TextDecoder();let pending='',text='',frames=0,done=false;
+ const packet=line=>{
+  if(!line.trim())return;if(line.length>200000||done)throw Error('invalid_local_packet');
+  const d=JSON.parse(line);
+  if(d.kind==='transcript'){
+   if(text||frames||typeof d.text!=='string'||!d.text.trim()||d.text.length>100)throw Error('invalid_local_transcript');
+   text=d.text;onPhase('speech');send(ws,{kind:'transcript',text});return;
+  }
+  if(d.kind==='audio'){
+   if(!text||d.rate!==24000||typeof d.pcm!=='string'||d.pcm.length>160000||!d.pcm.length||!/[A-Za-z0-9+/]/.test(d.pcm)||!/^[A-Za-z0-9+/]*={0,2}$/.test(d.pcm))throw Error('invalid_local_audio');
+   const pcm=Buffer.from(d.pcm,'base64');
+   if(!pcm.length||pcm.length%2||pcm.length>120000||pcm.toString('base64')!==d.pcm)throw Error('invalid_local_pcm');
+   frames+=pcm.length/2;if(frames>480000)throw Error('local_audio_too_long');
+   send(ws,{kind:'audio',pcm:d.pcm,rate:24000});return;
+  }
+  if(d.kind==='done'){
+   if(!text||!frames||d.text!==text)throw Error('invalid_local_done');
+   const timings=Object.fromEntries(['dialogue_seconds','first_audio_seconds','total_seconds'].filter(k=>Number.isFinite(d.timings?.[k])&&d.timings[k]>=0&&d.timings[k]<=120).map(k=>[k,d.timings[k]]));
+   send(ws,{kind:'done',text,source:'local_codex_and_local_qwen_child_stream',voice_provider:'Local Qwen3-TTS VoiceDesign child A',timings});done=true;return;
+  }
+  if(d.kind==='error')throw Error('local_stream_failure');
+  throw Error('invalid_local_kind');
+ };
+ try{
+  while(true){const result=await reader.read();if(signal.aborted)throw Error('local_turn_cancelled');pending+=decoder.decode(result.value,{stream:!result.done});let end;while((end=pending.indexOf('\n'))>=0){packet(pending.slice(0,end));pending=pending.slice(end+1);}if(pending.length>200000)throw Error('local_packet_too_large');if(result.done)break;}
+  if(pending.trim())packet(pending);if(!done)throw Error('incomplete_local_stream');
+ }finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
+}
 const originOK=req=>req.headers.origin===ORIGIN;
 let daily={day:'',total:0,ips:new Map()};
 const active=new Set(),cache=new Map();
@@ -110,6 +144,7 @@ wss.on('connection',(ws,req)=>{
    if(event){const variants=contract.events[b.event];if(!variants||!Number.isInteger(b.variant??0)||(b.variant??0)<0)throw Error('invalid_event');const variant=(b.variant??0)%variants.length;text=variants[variant];eventKey=b.event+':'+variant;
    }else{
     admit(req);send(ws,{kind:'ready',model:localMode?'local_codex_agent':MODEL});let messages=validateTurn(b);
+    if(localMode){phase='dialogue';await streamLocalTurn(ws,b,ac.signal,value=>{phase=value;});return;}
     for(let round=0;round<3;round++){
      phase='dialogue';const d=await completion(messages,round<2,ac.signal);const output=d.output||[];const calls=output.filter(o=>o.type==='function_call');
      if(calls.length&&round<2){messages.push(...output);for(const call of calls.slice(0,1)){
@@ -132,7 +167,7 @@ wss.on('connection',(ws,req)=>{
 function wav(pcm){const h=Buffer.alloc(44);h.write('RIFF');h.writeUInt32LE(36+pcm.length,4);h.write('WAVEfmt ',8);h.writeUInt32LE(16,16);h.writeUInt16LE(1,20);h.writeUInt16LE(1,22);h.writeUInt32LE(16000,24);h.writeUInt32LE(32000,28);h.writeUInt16LE(2,32);h.writeUInt16LE(16,34);h.write('data',36);h.writeUInt32LE(pcm.length,40);return Buffer.concat([h,pcm]);}
 function studioAuthorized(req){const expected=process.env.WAKUKU_STUDIO_TOKEN_SHA256||'';const token=req.headers['x-wakuku-studio-token'];if(expected.length!==64||typeof token!=='string')return false;const got=createHash('sha256').update(token).digest('hex');return timingSafeEqual(Buffer.from(got),Buffer.from(expected));}
 export const cloud={
- health:()=>({available:configured()&&voicesReady,last_failure:lastFailure,voice_assets_ready:voicesReady,model:localMode?'local_codex_agent':MODEL,tts:localMode?'local_qwen3_child_A':TTS,voice:localMode?'A-soft-sprite':VOICE,local:localMode,streaming:false,turn_transport:'http_sse',active:active.size,max_players:5,history_messages:6,max_output_tokens:240,reasoning:'none',expensive_fallback:false,interaction_llm_calls:0,rate_limit_kind:'soft_process_40_ip_200_total_daily_resets_on_process_restart',human_microphone_action_verified:false}),
+ health:()=>({available:configured()&&voicesReady,last_failure:lastFailure,voice_assets_ready:voicesReady,model:localMode?'local_codex_agent':MODEL,tts:localMode?'local_qwen3_child_A':TTS,voice:localMode?'A-soft-sprite':VOICE,local:localMode,streaming:localMode,turn_transport:'http_sse',active:active.size,max_players:5,history_messages:6,max_output_tokens:240,reasoning:'none',expensive_fallback:false,interaction_llm_calls:0,rate_limit_kind:'soft_process_40_ip_200_total_daily_resets_on_process_restart',human_microphone_action_verified:false}),
  upgrade(req,socket,head){if(!originOK(req)||!['/broker/local/chat/turn','/broker/local/interaction/turn'].includes(req.url)){socket.destroy();return;}if(wss.clients.size+httpPeers.size>=5){socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');return;}wss.handleUpgrade(req,socket,head,ws=>wss.emit('connection',ws,req));},
  async handle(req,res,url){
   const p=url.pathname;

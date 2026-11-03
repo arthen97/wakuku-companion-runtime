@@ -86,6 +86,7 @@ export class TypedAgent {
   }
   cancel(reason='user_interrupt') {
     const wasActive=this.active,scheduledSources=this.sources.size;let stoppedSources=0;
+    if(wasActive)this.logTiming('cancelled');
     this.epoch++; this.active=false;
     clearTimeout(this.finishTimer);this.finishTimer=null;clearTimeout(this.deadline);
     if(this.ws) {
@@ -104,28 +105,31 @@ export class TypedAgent {
     this.cancel();
     const epoch=this.epoch;
     this.active=true;this.finalText='';this.receivedAudio=false;
+    this.turnStartedAt=performance.now();this.transcriptAt=null;this.firstAudioAt=null;
     this.inputSource=inputSource;this.mouthSamples=0;this.mouthPeak=0;this.audioSeconds=0;
     this.clockBase=null;this.clockSeen=0;this.clockAdvancedAt=0;
     this.queuedSources=0;this.endedSources=0;this.decoding=0;
+    this.logTiming('submit');
     try {
       await this.unlock();
       if(epoch!==this.epoch)return;
       this.gain.gain.value=this.muted?0:1;
       if(this.ctx.state!=='running')throw new Error('audio_blocked');
       const endpoint='/local/chat';
-      let health;
+      let health=this.healthCache&&performance.now()-this.healthCache.at<30000?this.healthCache.value:null;
       // mEnv can sleep between visits. Only the free, read-only health request
       // may be retried; never repeat an inference/speech POST after uncertainty.
-      for(const timeout of [2500,5000,10000]) {
+      for(const timeout of health?[]:[2500,5000,10000]) {
         if(epoch!==this.epoch)return;
         try {
           const response=await fetch(this.url+endpoint+'/health',{signal:AbortSignal.timeout(timeout)});
           if(!response.ok)throw Error('health_unavailable');
-          health=await response.json();break;
+          health=await response.json();if(health.available)this.healthCache={at:performance.now(),value:health};break;
         } catch(error) {if(timeout===10000)throw error;}
       }
       if(epoch!==this.epoch)return;
       if(!health.available)throw new Error('not_configured');
+      this.logTiming('health_ready');
       const turnPath=interaction?'/local/interaction/turn':endpoint+'/turn';
       const ws=health.turn_transport==='http_sse'
         ?new HttpSseTurn(this.url+turnPath,this.url+'/local/turn/result')
@@ -138,8 +142,9 @@ export class TypedAgent {
       ws.onmessage=({data})=>{
         if(epoch!==this.epoch||!this.active)return;
         let packet;try{packet=JSON.parse(data);}catch{return this.fail('invalid_packet',epoch);}
+        if(packet.kind==='transcript'&&this.transcriptAt===null){this.transcriptAt=performance.now();this.logTiming('transcript');}
         if(packet.kind==='audio') {
-          if(!this.receivedAudio)this.onPacket({kind:'audio_start'});
+          if(!this.receivedAudio){this.firstAudioAt=performance.now();this.logTiming('first_audio');this.onPacket({kind:'audio_start'});}
           this.receivedAudio=true;this.queue(packet.pcm,packet.rate);
         } else if(packet.kind==='audio_encoded') {
           this.decoding++;
@@ -176,6 +181,7 @@ export class TypedAgent {
           inputSource:this.inputSource,audioContext:this.ctx.state,receivedAudio:this.receivedAudio,muted:this.muted,
           clockSeconds:clock,scheduledEndSeconds:this.nextTime,clockAdvancedSeconds:clock-this.clockBase,
           queuedSources:this.queuedSources,endedSources:this.endedSources,completion:'output_clock_and_sources_ended'}));
+        this.logTiming('playout_complete');
         this.onComplete?.(packet.text,packet.source);
         return;
       }
@@ -204,7 +210,7 @@ export class TypedAgent {
     const buffer=await this.ctx.decodeAudioData(bytes.buffer);
     if(epoch!==this.epoch||!this.active)return;
     if(!Number.isFinite(buffer.duration)||buffer.duration<=0||buffer.duration>35)throw Error('invalid_duration');
-    if(!this.receivedAudio)this.onPacket({kind:'audio_start'});
+    if(!this.receivedAudio){this.firstAudioAt=performance.now();this.logTiming('first_audio');this.onPacket({kind:'audio_start'});}
     this.receivedAudio=true;this.queueBuffer(buffer);
   }
   queueBuffer(buffer) {
@@ -218,8 +224,13 @@ export class TypedAgent {
     source.start(this.nextTime);this.nextTime+=buffer.duration;
     this.watchPlayback(epoch);
   }
+  logTiming(stage) {
+    const elapsed=value=>value===null?null:Math.round(value-this.turnStartedAt);
+    console.info('wakuku_turn_timing',JSON.stringify({stage,inputSource:this.inputSource,elapsedMilliseconds:Math.round(performance.now()-this.turnStartedAt),transcriptMilliseconds:elapsed(this.transcriptAt),firstAudioMilliseconds:elapsed(this.firstAudioAt)}));
+  }
   fail(code,epoch,text) {
     if(epoch!==this.epoch||!this.active)return;
+    this.healthCache=null;
     this.cancel(code);
     this.onPacket({kind:'error',text:text||(code==='not_configured'?
       'Agent 语音尚未配置；请完成本机配置并启动陪伴服务。':

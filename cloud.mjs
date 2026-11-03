@@ -1,7 +1,8 @@
 // Same-origin Merouter APIs. No local MLX dependency, paid realtime sessions,
 // host provider configuration, arbitrary model selection, or inference retries.
 import {WebSocketServer} from 'ws';
-import {createHash,timingSafeEqual} from 'node:crypto';
+import {createHash,timingSafeEqual,randomUUID} from 'node:crypto';
+import {EventEmitter} from 'node:events';
 import {readFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -19,10 +20,15 @@ const MODEL='deepseek-v4.1-flash',TTS='seed-tts-2.0',VOICE='zh_female_peiqi_uran
 const ASR='seed-speech-speech-to-text-asr';
 const ORIGIN=process.env.PUBLIC_ORIGIN||'https://fslviul4ta14.app.stg.medeo.ai';
 const headers={'Content-Type':'application/json',...(process.env.MEROUTER_API_KEY?{'X-Api-Key':process.env.MEROUTER_API_KEY}:{}),...(process.env.MEROUTER_SERVICE_KEY?{'X-Service-Key':process.env.MEROUTER_SERVICE_KEY}:{})};
-const configured=()=>!!(process.env.MEROUTER_API_KEY||process.env.MEROUTER_SERVICE_KEY);
+const LOCAL_URL=String(process.env.WAKUKU_LOCAL_AGENT_URL||'').replace(/\/$/,'');
+const LOCAL_TOKEN=process.env.WAKUKU_LOCAL_AGENT_TOKEN||'';
+const localMode=!!(LOCAL_URL&&LOCAL_TOKEN);
+const configured=()=>localMode||!!(process.env.MEROUTER_API_KEY||process.env.MEROUTER_SERVICE_KEY);
+async function localPost(route,payload,signal){const r=await fetch(LOCAL_URL+route,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+LOCAL_TOKEN},body:JSON.stringify(payload),signal:signal?AbortSignal.any([signal,AbortSignal.timeout(55000)]):AbortSignal.timeout(55000)});if(!r.ok)throw Error('local_agent_'+r.status);return r;}
 const originOK=req=>req.headers.origin===ORIGIN;
 let daily={day:'',total:0,ips:new Map()};
 const active=new Set(),cache=new Map();
+const httpPeers=new Map();
 function admit(req){
  const day=new Date().toISOString().slice(0,10);if(daily.day!==day)daily={day,total:0,ips:new Map()};
  const raw=String(req.headers['cloudfront-viewer-address']||req.socket.remoteAddress||'unknown');
@@ -51,6 +57,8 @@ async function post(endpoint,payload,signal){
  return response;
 }
 async function completion(messages,tools,signal){
+ if(localMode){const users=messages.filter(m=>m.role==='user'),last=users.at(-1);const plain=c=>typeof c==='string'?c:(c||[]).map(x=>x.text||'').join('');const r=await localPost('/chat',{text:plain(last?.content).slice(0,300),history:messages.filter(m=>['user','assistant'].includes(m.role)&&m!==last).slice(-4).map(m=>({role:m.role,text:plain(m.content).slice(0,160)})),context:''},signal);const d=await r.json();if(typeof d.text!=='string'||!d.text.trim())throw Error('empty_reply');return {output:[{type:'message',role:'assistant',content:[{type:'output_text',text:d.text.slice(0,100)}]}]};}
+
  const r=await post('/v1/responses',{model:MODEL,input:messages,reasoning:{effort:'none'},max_output_tokens:240,temperature:.85,store:false,...(tools?{tools:[contract.tool],tool_choice:'auto',parallel_tool_calls:false}:{})},signal);
  let d;try{d=await r.json();}finally{await receipt(r,'/v1/responses',MODEL,d?.usage);}return d;
 }
@@ -63,6 +71,7 @@ async function speech(text,signal,eventKey){
   const provider=voiceAssets.find(a=>a.asset===eventKey.replace(':','-')).provider;
   const result={audio:audio.toString('base64'),mime:'audio/mpeg',cached:true,provider};cache.set(eventKey,result);return result;
  }
+ if(localMode){const r=await localPost('/speech',{text:text.slice(0,100)},signal);const bytes=Buffer.from(await r.arrayBuffer());if(bytes.length<44||bytes.length>2500000)throw Error('invalid_audio_size');return {audio:bytes.toString('base64'),mime:'audio/wav',cached:false,provider:'Local Qwen3-TTS VoiceDesign child A'};}
  const response=await post('/v1/audio/speech',{model:TTS,input:text,voice:VOICE,response_format:'mp3'},signal);
  const mime=String(response.headers.get('content-type')||'').split(';')[0];
  if(!['audio/mpeg','audio/mp3','audio/wav','audio/x-wav','audio/ogg','audio/mp4'].includes(mime)){await receipt(response,'/v1/audio/speech',TTS);throw Error('invalid_audio_type');}
@@ -115,16 +124,16 @@ wss.on('connection',(ws,req)=>{
    }
    if(ac.signal.aborted)return;
    send(ws,{kind:'transcript',text});send(ws,{kind:'queued',stage:'speech'});phase=event?'cached_voice':'speech';const audio=await speech(text,ac.signal,eventKey);
-   if(ac.signal.aborted)return;send(ws,{kind:'audio_encoded',...audio});send(ws,{kind:'done',text,source:event?'packaged_interaction_audio':'merouter_deepseek_and_cloud_tts',voice_provider:audio.provider});
-  }catch(error){lastFailure={phase,code:/^(provider_[0-9]{3}|not_configured|busy|empty_reply|daily_limit|invalid_turn|invalid_audio_type|invalid_audio_size)$/.test(error.message)?error.message:'transport_or_runtime',provider_code:error.upstreamCode||null,category:error.category||null,at:new Date().toISOString()};if(!ac.signal.aborted)send(ws,{kind:'error',code:error.message==='daily_limit'?'daily_limit':'game_service',text:error.message==='daily_limit'?'今天的试玩对话次数已用完。':error.message==='busy'?'小屋有几段声音正在回应，请稍后再试。':'这次云端回应没连上，已保留当前动作。'});}
+   if(ac.signal.aborted)return;send(ws,{kind:'audio_encoded',...audio});send(ws,{kind:'done',text,source:event?'packaged_interaction_audio':localMode?'local_codex_and_local_qwen_child':'merouter_deepseek_and_cloud_tts',voice_provider:audio.provider});
+  }catch(error){console.info(JSON.stringify({event:'cloud_turn_failure',code:/^[a-z0-9_]+$/i.test(error.message||'')?error.message:'transport_error',automatic_retry:false}));if(!ac.signal.aborted)send(ws,{kind:'error',code:error.message==='daily_limit'?'daily_limit':'game_service',text:error.message==='daily_limit'?'今天的试玩对话次数已用完。':error.message==='busy'?'小屋有几段声音正在回应，请稍后再试。':'这次云端回应没连上，已保留当前动作。'});}
   finally{active.delete(ws);setTimeout(()=>ws.close(),500);}
  });
 });
 function wav(pcm){const h=Buffer.alloc(44);h.write('RIFF');h.writeUInt32LE(36+pcm.length,4);h.write('WAVEfmt ',8);h.writeUInt32LE(16,16);h.writeUInt16LE(1,20);h.writeUInt16LE(1,22);h.writeUInt32LE(16000,24);h.writeUInt32LE(32000,28);h.writeUInt16LE(2,32);h.writeUInt16LE(16,34);h.write('data',36);h.writeUInt32LE(pcm.length,40);return Buffer.concat([h,pcm]);}
 function studioAuthorized(req){const expected=process.env.WAKUKU_STUDIO_TOKEN_SHA256||'';const token=req.headers['x-wakuku-studio-token'];if(expected.length!==64||typeof token!=='string')return false;const got=createHash('sha256').update(token).digest('hex');return timingSafeEqual(Buffer.from(got),Buffer.from(expected));}
 export const cloud={
- health:()=>({available:configured()&&voicesReady,last_failure:lastFailure,voice_assets_ready:voicesReady,model:MODEL,tts:TTS,voice:VOICE,local:false,streaming:false,active:active.size,max_players:5,history_messages:6,max_output_tokens:240,reasoning:'none',expensive_fallback:false,interaction_llm_calls:0,rate_limit_kind:'soft_process_40_ip_200_total_daily_resets_on_process_restart',human_microphone_action_verified:false}),
- upgrade(req,socket,head){if(!originOK(req)||!['/broker/local/chat/turn','/broker/local/interaction/turn'].includes(req.url)){socket.destroy();return;}if(wss.clients.size>=5){socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');return;}wss.handleUpgrade(req,socket,head,ws=>wss.emit('connection',ws,req));},
+ health:()=>({available:configured()&&voicesReady,last_failure:lastFailure,voice_assets_ready:voicesReady,model:localMode?'local_codex_agent':MODEL,tts:localMode?'local_qwen3_child_A':TTS,voice:localMode?'A-soft-sprite':VOICE,local:localMode,streaming:false,turn_transport:'http_sse',active:active.size,max_players:5,history_messages:6,max_output_tokens:240,reasoning:'none',expensive_fallback:false,interaction_llm_calls:0,rate_limit_kind:'soft_process_40_ip_200_total_daily_resets_on_process_restart',human_microphone_action_verified:false}),
+ upgrade(req,socket,head){if(!originOK(req)||!['/broker/local/chat/turn','/broker/local/interaction/turn'].includes(req.url)){socket.destroy();return;}if(wss.clients.size+httpPeers.size>=5){socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');return;}wss.handleUpgrade(req,socket,head,ws=>wss.emit('connection',ws,req));},
  async handle(req,res,url){
   const p=url.pathname;
   if(req.method==='GET'&&p==='/broker/local/chat/health'){json(res,200,this.health());return;}
@@ -132,6 +141,29 @@ export const cloud={
   if(!originOK(req)){json(res,403,{error:'origin'});return;}
   if(!configured()){json(res,503,{error:'not_configured'});return;}
   try{
+   // The mEnv public edge rejects WebSocket upgrades (CloudFront 403).
+   // Same-origin POST/SSE uses the exact existing turn processor, including
+   // admission, model limits, tool receipts, cached events and cancellation.
+   if(req.method==='POST'&&['/broker/local/chat/turn','/broker/local/interaction/turn'].includes(p)){
+    const b=await body(req,20000);
+    if(httpPeers.size+wss.clients.size>=5){json(res,503,{error:'busy'});return;}
+    const id=randomUUID(),peer=new EventEmitter();peer.readyState=1;
+    res.writeHead(200,{'Content-Type':'text/event-stream;charset=utf-8','Cache-Control':'no-cache,no-store,no-transform','X-Content-Type-Options':'nosniff','X-Accel-Buffering':'no'});
+    res.flushHeaders?.();
+    peer.send=data=>{if(peer.readyState===1&&!res.destroyed)res.write('data: '+data+'\n\n');};
+    const keepalive=setInterval(()=>{if(peer.readyState===1&&!res.destroyed)res.write(': keepalive\n\n');},12000);
+    peer.close=()=>{if(peer.readyState!==1)return;peer.readyState=3;clearInterval(keepalive);httpPeers.delete(id);peer.emit('close');if(!res.destroyed)res.end();};
+    httpPeers.set(id,peer);res.once('close',()=>peer.close());
+    send(peer,{kind:'transport',transport:'http_sse',turn_id:id});
+    wss.emit('connection',peer,req);peer.emit('message',Buffer.from(JSON.stringify(b)));
+    return;
+   }
+   if(req.method==='POST'&&p==='/broker/local/turn/result'){
+    const b=await body(req,20000),peer=httpPeers.get(b.turn_id);
+    if(!peer||typeof b.call_id!=='string'||b.call_id.length>160||!b.result||typeof b.result!=='object'){json(res,404,{error:'turn_not_found'});return;}
+    peer.emit('message',Buffer.from(JSON.stringify({kind:'tool_result',call_id:b.call_id,result:b.result})));
+    json(res,202,{accepted:true});return;
+   }
    if(p==='/broker/local/decide'&&req.method==='POST'){await body(req,16000);json(res,200,{available:false,source:'cloud_native_routine_only_local_laya_retained_on_mac'});return;}
    if(p==='/broker/local/asr/transcribe'&&req.method==='POST'){
     admit(req);const b=await body(req,700000);if(b.source!=='browser_microphone'||b.consent!=='microphone_audio_to_merouter_asr'||b.rate!==16000)throw Error('microphone_consent_required');

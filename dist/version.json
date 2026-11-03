@@ -13,5 +13,6 @@
     "Hood flap can intersect the left sleeve during reach/sip/return (peak 36.2 mm).",
     "Thumb/wrist cross the tray rim in one reach pose.",
     "Physical phone and human spoken-action acceptance remain pending."
-  ]
+  ],
+  "backend_revision": "responses-assistant-history-20261102"
 }

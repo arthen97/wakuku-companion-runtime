@@ -43,7 +43,11 @@ async function post(endpoint,payload,signal){
  let response;
  try{response=await fetch(BASE+endpoint,{method:'POST',headers,body:JSON.stringify(payload),signal:signal?AbortSignal.any([signal,AbortSignal.timeout(65000)]):AbortSignal.timeout(65000)});}
  catch(error){console.info(JSON.stringify({event:'merouter_uncertain_transport',endpoint,model:payload.model,request_id:null,error:error.name,automatic_retry:false,cost:null}));throw error;}
- if(!response.ok){await receipt(response,endpoint,payload.model);throw Error('provider_'+response.status);}
+ if(!response.ok){
+  let upstreamCode=null,category=null;
+  try{const detail=await response.clone().json(),item=detail.error||detail;const code=String(item.code||item.type||'');if(/^[A-Za-z0-9_.-]{1,80}$/.test(code))upstreamCode=code;const message=String(item.message||'');category=/quota|budget|credit|balance/i.test(message)?'quota_or_budget':/rate|too many/i.test(message)?'rate_limit':/OutputContentItem|output_text|assistant.*content/i.test(message)?'history_format':/voice/i.test(message)?'voice_request':null;}catch{}
+  await receipt(response,endpoint,payload.model);const error=Error('provider_'+response.status);error.upstreamCode=upstreamCode;error.category=category;throw error;
+ }
  return response;
 }
 async function completion(messages,tools,signal){
@@ -79,6 +83,7 @@ function validAction(call){let args;try{args=JSON.parse(call.arguments);}catch{r
  if(call.name!=='companion_action'||!Object.hasOwn(contract.actions,args.action)||typeof args.value!=='string'||args.value.length>80||(allowed&&!allowed.includes(args.value))||!Number.isInteger(args.wait_seconds??0)||(args.wait_seconds??0)<0||(args.wait_seconds??0)>86400)return null;
  return {...args,wait_seconds:args.wait_seconds??0};
 }
+let lastFailure=null;
 const wss=new WebSocketServer({noServer:true,maxPayload:20000});
 wss.on('connection',(ws,req)=>{
  const ac=new AbortController();let started=false,ack=null,toolTimer=null;
@@ -89,7 +94,7 @@ wss.on('connection',(ws,req)=>{
   let b;try{b=JSON.parse(bytes);}catch{return ws.close(1008);}
   if(b.kind==='cancel'){stop();return ws.close();}
   if(b.kind==='tool_result'){if(ack)ack(b);return;}
-  if(started)return;started=true;
+  if(started)return;started=true;let phase='admission';
   try{
    if(!configured()||!voicesReady)throw Error('not_configured');if(active.size>=5)throw Error('busy');active.add(ws);
    const event=req.url==='/broker/local/interaction/turn';let text,eventKey;
@@ -97,7 +102,7 @@ wss.on('connection',(ws,req)=>{
    }else{
     admit(req);send(ws,{kind:'ready',model:MODEL});let messages=validateTurn(b);
     for(let round=0;round<3;round++){
-     const d=await completion(messages,round<2,ac.signal);const output=d.output||[];const calls=output.filter(o=>o.type==='function_call');
+     phase='dialogue';const d=await completion(messages,round<2,ac.signal);const output=d.output||[];const calls=output.filter(o=>o.type==='function_call');
      if(calls.length&&round<2){messages.push(...output);for(const call of calls.slice(0,1)){
       const args=validAction(call);let result={ok:false,error:'invalid_action'};
       if(args){const received=new Promise(resolve=>{toolTimer=setTimeout(()=>{ack=null;resolve({result:{ok:false,error:'tool_timeout'}});},8000);ack=packet=>{if(packet.call_id!==call.call_id&&packet.result?.error!=='cancelled')return;clearTimeout(toolTimer);toolTimer=null;ack=null;resolve(packet);};});send(ws,{kind:'tool',call_id:call.call_id,...args});result=(await received).result;
@@ -109,16 +114,16 @@ wss.on('connection',(ws,req)=>{
     if(!text)throw Error('empty_reply');
    }
    if(ac.signal.aborted)return;
-   send(ws,{kind:'transcript',text});send(ws,{kind:'queued',stage:'speech'});const audio=await speech(text,ac.signal,eventKey);
+   send(ws,{kind:'transcript',text});send(ws,{kind:'queued',stage:'speech'});phase=event?'cached_voice':'speech';const audio=await speech(text,ac.signal,eventKey);
    if(ac.signal.aborted)return;send(ws,{kind:'audio_encoded',...audio});send(ws,{kind:'done',text,source:event?'packaged_interaction_audio':'merouter_deepseek_and_cloud_tts',voice_provider:audio.provider});
-  }catch(error){if(!ac.signal.aborted)send(ws,{kind:'error',code:error.message==='daily_limit'?'daily_limit':'game_service',text:error.message==='daily_limit'?'今天的试玩对话次数已用完。':error.message==='busy'?'小屋有几段声音正在回应，请稍后再试。':'这次云端回应没连上，已保留当前动作。'});}
+  }catch(error){lastFailure={phase,code:/^(provider_[0-9]{3}|not_configured|busy|empty_reply|daily_limit|invalid_turn|invalid_audio_type|invalid_audio_size)$/.test(error.message)?error.message:'transport_or_runtime',provider_code:error.upstreamCode||null,category:error.category||null,at:new Date().toISOString()};if(!ac.signal.aborted)send(ws,{kind:'error',code:error.message==='daily_limit'?'daily_limit':'game_service',text:error.message==='daily_limit'?'今天的试玩对话次数已用完。':error.message==='busy'?'小屋有几段声音正在回应，请稍后再试。':'这次云端回应没连上，已保留当前动作。'});}
   finally{active.delete(ws);setTimeout(()=>ws.close(),500);}
  });
 });
 function wav(pcm){const h=Buffer.alloc(44);h.write('RIFF');h.writeUInt32LE(36+pcm.length,4);h.write('WAVEfmt ',8);h.writeUInt32LE(16,16);h.writeUInt16LE(1,20);h.writeUInt16LE(1,22);h.writeUInt32LE(16000,24);h.writeUInt32LE(32000,28);h.writeUInt16LE(2,32);h.writeUInt16LE(16,34);h.write('data',36);h.writeUInt32LE(pcm.length,40);return Buffer.concat([h,pcm]);}
 function studioAuthorized(req){const expected=process.env.WAKUKU_STUDIO_TOKEN_SHA256||'';const token=req.headers['x-wakuku-studio-token'];if(expected.length!==64||typeof token!=='string')return false;const got=createHash('sha256').update(token).digest('hex');return timingSafeEqual(Buffer.from(got),Buffer.from(expected));}
 export const cloud={
- health:()=>({available:configured()&&voicesReady,voice_assets_ready:voicesReady,model:MODEL,tts:TTS,voice:VOICE,local:false,streaming:false,active:active.size,max_players:5,history_messages:6,max_output_tokens:240,reasoning:'none',expensive_fallback:false,interaction_llm_calls:0,rate_limit_kind:'soft_process_40_ip_200_total_daily_resets_on_process_restart',human_microphone_action_verified:false}),
+ health:()=>({available:configured()&&voicesReady,last_failure:lastFailure,voice_assets_ready:voicesReady,model:MODEL,tts:TTS,voice:VOICE,local:false,streaming:false,active:active.size,max_players:5,history_messages:6,max_output_tokens:240,reasoning:'none',expensive_fallback:false,interaction_llm_calls:0,rate_limit_kind:'soft_process_40_ip_200_total_daily_resets_on_process_restart',human_microphone_action_verified:false}),
  upgrade(req,socket,head){if(!originOK(req)||!['/broker/local/chat/turn','/broker/local/interaction/turn'].includes(req.url)){socket.destroy();return;}if(wss.clients.size>=5){socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');return;}wss.handleUpgrade(req,socket,head,ws=>wss.emit('connection',ws,req));},
  async handle(req,res,url){
   const p=url.pathname;

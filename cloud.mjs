@@ -27,8 +27,18 @@ const configured=()=>localMode||!!(process.env.MEROUTER_API_KEY||process.env.MER
 async function localPost(route,payload,signal){const r=await fetch(LOCAL_URL+route,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+LOCAL_TOKEN},body:JSON.stringify(payload),signal:signal?AbortSignal.any([signal,AbortSignal.timeout(55000)]):AbortSignal.timeout(55000)});if(!r.ok)throw Error('local_agent_'+r.status);return r;}
 // The local worker emits bounded NDJSON so the first PCM can play before the
 // complete utterance is synthesized. No tools or caller-selected routes exist.
+function compactRoomFacts(context){
+ try{
+  const d=JSON.parse(String(context||''));if(!d||typeof d!=='object'||Array.isArray(d))return '';
+  const out={};for(const key of ['local_time','period','scene','mood','nickname','preference','place','waiting','prop_action','seat_state','session','timer']){
+   const value=d[key];if(typeof value==='string')out[key]=value.slice(0,50);else if(typeof value==='boolean'||(typeof value==='number'&&Number.isFinite(value)))out[key]=value;
+  }
+  if(Array.isArray(d.virtual_room_objects)){const objects=d.virtual_room_objects.filter(v=>typeof v==='string').slice(0,3).map(v=>v.slice(0,40));if(JSON.stringify({...out,virtual_room_objects:objects}).length<=600)out.virtual_room_objects=objects;}
+  const text=JSON.stringify(out);return text.length<=600?text:'';
+ }catch{return '';}
+}
 async function streamLocalTurn(ws,b,signal,onPhase){
- const payload={text:b.text,history:(Array.isArray(b.history)?b.history:[]).slice(-4).filter(m=>['user','assistant'].includes(m?.role)&&typeof m.text==='string').map(m=>({role:m.role,text:m.text.slice(0,140)})),context:String(b.context||'').slice(0,600)};
+ const payload={text:b.text,history:(Array.isArray(b.history)?b.history:[]).slice(-4).filter(m=>['user','assistant'].includes(m?.role)&&typeof m.text==='string').map(m=>({role:m.role,text:m.text.slice(0,140)})),context:compactRoomFacts(b.context)};
  const response=await localPost('/turn',payload,signal);
  if(!response.body||!String(response.headers.get('content-type')||'').startsWith('application/x-ndjson'))throw Error('invalid_local_stream');
  const reader=response.body.getReader(),decoder=new TextDecoder();let pending='',text='',frames=0,done=false;

@@ -1,0 +1,7 @@
+node_modules/
+.env
+.env.*
+private/
+*.private
+dist/companion-770d4b65cb8b.pck
+dist/*.assembling

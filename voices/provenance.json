@@ -1,0 +1,170 @@
+{
+  "assets": [
+    {
+      "asset": "touch-0",
+      "file": "touch-0.mp3",
+      "text": "嘿嘿，摸到我的开心开关啦。",
+      "provider": "Merouter Seed TTS 2.0",
+      "source_request_id": "00b4bfc0-1bb3-4385-82b1-db4403e12e91",
+      "bytes": 24621,
+      "sha256": "40365f169116d52c454782f015cf217acf46000d0847a6c8f708da4cc8d41832",
+      "seconds": 3.072,
+      "decode_verified": true
+    },
+    {
+      "asset": "touch-1",
+      "file": "touch-1.mp3",
+      "text": "再摸一下？我把小手也给你。",
+      "provider": "Merouter Seed TTS 2.0",
+      "source_request_id": "2b537242-84d3-4975-ada4-f13cf2dc93fa",
+      "bytes": 25965,
+      "sha256": "8dc452872c8ebbc42e56a9f88df54c096607875a63768cca18b7ea3aa2abc01d",
+      "seconds": 3.24,
+      "decode_verified": true
+    },
+    {
+      "asset": "touch-2",
+      "file": "touch-2.mp3",
+      "text": "唔，好舒服。往你手心蹭一下。",
+      "provider": "Merouter Seed TTS 2.0",
+      "source_request_id": "614a60b2-047b-40b7-af21-a5c0d176b240",
+      "bytes": 29229,
+      "sha256": "72088a9dc3cdefd94e35f740a16122d002d9dd130eda9796fa481c886d0713f8",
+      "seconds": 3.648,
+      "decode_verified": true
+    },
+    {
+      "asset": "touch-3",
+      "file": "touch-3.mp3",
+      "text": "收到摸摸！送你一颗小心心。",
+      "provider": "Merouter Seed TTS 2.0",
+      "source_request_id": "79c06bd8-71dc-4b91-b759-e106236f5365",
+      "bytes": 27693,
+      "sha256": "4f769e24f229d76268e30672e103ac624c379dae900fed1ecc36fd4874f1cc3f",
+      "seconds": 3.456,
+      "decode_verified": true
+    },
+    {
+      "asset": "food-0",
+      "file": "food-0.mp3",
+      "text": "啊呜，甜甜的！谢谢你。",
+      "provider": "Merouter Seed TTS 2.0",
+      "source_request_id": "01dcbade-a14c-47b3-96a2-05f1861f11a9",
+      "bytes": 25965,
+      "sha256": "803a6035b18fd5ea3fd43655a8165cad6c0bc1f2e121cc771c2203b4a5f00c5b",
+      "seconds": 3.24,
+      "decode_verified": true
+    },
+    {
+      "asset": "food-1",
+      "file": "food-1.mp3",
+      "text": "咔嚓，好香呀。",
+      "provider": "Merouter Seed TTS 2.0",
+      "source_request_id": "d2ed69c9-eca0-44f7-81cc-643bb188ea23",
+      "bytes": 18093,
+      "sha256": "b9a7e9f32107d45c6d4f38f6220a975ab0a0f36cae269a0defedaca366b9dcfd",
+      "seconds": 2.256,
+      "decode_verified": true
+    },
+    {
+      "asset": "food-2",
+      "file": "food-2.mp3",
+      "text": "嗯，这个味道有点特别。",
+      "provider": "Merouter Seed TTS 2.0",
+      "source_request_id": "18b9bdf8-f7ef-4056-ba0b-592331ce322d",
+      "bytes": 24621,
+      "sha256": "972d817a5dfb0114a77c198ef0d1c57a1e6fe37805205d641c7b04545ca4aa61",
+      "seconds": 3.072,
+      "decode_verified": true
+    },
+    {
+      "asset": "brush-0",
+      "file": "brush-0.mp3",
+      "text": "轻轻的，好舒服呀。",
+      "provider": "Merouter Seed TTS 2.0",
+      "source_request_id": "6c502a75-a65f-4657-83cb-0cffd7d7ffcb",
+      "bytes": 21357,
+      "sha256": "459d776f4de720446e1e501bc5dc5087cffd5c867906f89f8f85ed9ca37ef831",
+      "seconds": 2.664,
+      "decode_verified": true
+    },
+    {
+      "asset": "brush-1",
+      "file": "brush-1.mp3",
+      "text": "毛毛都变蓬松啦。",
+      "provider": "Merouter Seed TTS 2.0",
+      "source_request_id": "a8c137ca-c51a-4ad2-9e60-8a11b79d67ec",
+      "bytes": 18093,
+      "sha256": "417c1ddb389892eae5dc16fc53dd37ca24673d5df52532820a469743d5ecdeba",
+      "seconds": 2.256,
+      "decode_verified": true
+    },
+    {
+      "asset": "ball-0",
+      "file": "ball-0.mp3",
+      "text": "接住啦！再来一次。",
+      "provider": "Merouter Seed TTS 2.0",
+      "source_request_id": "01fc09f0-4dfe-488c-b305-f8f6f1364f6b",
+      "bytes": 18093,
+      "sha256": "d76519d71c8fb16538ab11bd535c30468108e45d8be67227b328e06889a122dc",
+      "seconds": 2.256,
+      "decode_verified": true
+    },
+    {
+      "asset": "ball-1",
+      "file": "ball-1.mp3",
+      "text": "哎呀，差一点点，再试试。",
+      "provider": "Merouter Seed TTS 2.0",
+      "source_request_id": "1ad418ba-6942-4164-88d3-0db6dd601c80",
+      "bytes": 25965,
+      "sha256": "52c4b25099035f31ed87cd30ccd8636322809ec60ab082bed96e27a721b067e1",
+      "seconds": 3.24,
+      "decode_verified": true
+    },
+    {
+      "asset": "radio-0",
+      "file": "radio-0.mp3",
+      "text": "让小电台继续陪着我们。",
+      "provider": "Merouter Seed TTS 2.0",
+      "source_request_id": "47f59ea2-29ac-409d-a265-6fe5c27abe8a",
+      "bytes": 22701,
+      "sha256": "8bc25ee3e83e6242abf41e6e5b3a4a9229409350863e9ac9f6b20f0d2068e12e",
+      "seconds": 2.832,
+      "decode_verified": true
+    },
+    {
+      "asset": "radio-1",
+      "file": "radio-1.mp3",
+      "text": "好，我们安静待一会儿。",
+      "provider": "Merouter Seed TTS 2.0",
+      "source_request_id": "c4c3580b-a2db-4a91-99c9-bddee8af1edc",
+      "bytes": 21357,
+      "sha256": "b8993e0192a18ade95c12b9d23367cb031b055c47d15635a03eb7fd52ecd36b0",
+      "seconds": 2.664,
+      "decode_verified": true
+    },
+    {
+      "asset": "sip-0",
+      "file": "sip-0.mp3",
+      "text": "先把小杯子捧好，陪你喝一口。",
+      "provider": "Merouter Seed TTS 2.0",
+      "source_request_id": "77a61411-fd34-4f10-8927-e49e5ad78086",
+      "bytes": 29229,
+      "sha256": "71700ebf5bf72d84a9a2825a9abeb074ba15371adbdbcfd5862fd27052c126de",
+      "seconds": 3.648,
+      "decode_verified": true
+    },
+    {
+      "asset": "sit-0",
+      "file": "sit-0.mp3",
+      "text": "我坐过来，挨着你待一会儿。",
+      "provider": "Qwen3-TTS packaged existing cotton_v1 cache",
+      "source_request_id": null,
+      "bytes": 19244,
+      "sha256": "e2bae5e0e702d1fec62afa322aa0a3a219c8e22a4d69c87276b6488f37252d2e",
+      "seconds": 2.376,
+      "decode_verified": true
+    }
+  ],
+  "runtime_event_synthesis_posts": 0
+}

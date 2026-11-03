@@ -1,0 +1,17 @@
+{
+  "release": "wakuku-invite-770d4b65cb8b",
+  "pack": "companion-770d4b65cb8b.pck",
+  "pack_sha256": "770d4b65cb8bac364ca3f51fdb0a49ffc2293676ea53acbdb129ca21889f1d0e",
+  "module": "annie-a8204e1a5209",
+  "index_sha256": "26078f9216e3e83ca4f67a03aaf03aeb8c9050ce1070d5d61f89feadf4c21977",
+  "wasm_sha256": "fc74679e3b97f76878947fcd4fbe1268cbfa6188182a2e33bbc3f5dc9bfa57d0",
+  "scope": "Latest frozen scene, cinematic lighting, contact-shadow correction, v026 closed animation seams, right-of-rug tea table, responsive portrait framing; same-origin Merouter dialogue and audio.",
+  "visual_signoff": false,
+  "physical_phone_verified": false,
+  "human_microphone_action_verified": false,
+  "known_limitations": [
+    "Hood flap can intersect the left sleeve during reach/sip/return (peak 36.2 mm).",
+    "Thumb/wrist cross the tray rim in one reach pose.",
+    "Physical phone and human spoken-action acceptance remain pending."
+  ]
+}

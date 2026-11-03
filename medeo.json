@@ -1,0 +1,7 @@
+{
+  "build": {
+    "shape": "node",
+    "output": ".",
+    "start": "node server.mjs"
+  }
+}

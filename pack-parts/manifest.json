@@ -1,0 +1,22 @@
+{
+  "pack": "companion-770d4b65cb8b.pck",
+  "pack_bytes": 108173784,
+  "pack_sha256": "770d4b65cb8bac364ca3f51fdb0a49ffc2293676ea53acbdb129ca21889f1d0e",
+  "parts": [
+    {
+      "file": "companion-770d4b65cb8b.pck.part01",
+      "bytes": 50331648,
+      "sha256": "af9f91ca19f6dbcb3ba19cd521410bf68eab3b258dd39e336e762117f6e38992"
+    },
+    {
+      "file": "companion-770d4b65cb8b.pck.part02",
+      "bytes": 50331648,
+      "sha256": "336484bb10a29500f6a572e8134bec3a16a69b15a484c31ac92ce1b483f5ab13"
+    },
+    {
+      "file": "companion-770d4b65cb8b.pck.part03",
+      "bytes": 7510488,
+      "sha256": "763a3a8c8b8709f6ad4efec6a45d663a7091993d43dcae47b60f9711db10344f"
+    }
+  ]
+}
